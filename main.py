@@ -454,11 +454,6 @@ if __name__ == "__main__":
     # ========================================
     print("\n=== Option 1: Single Mineral ===")
 
-    INPUT_FOLDER = "images/minerals_raw/sulfur"
-    OUTPUT_FOLDER = "images/minerals_processed/sulfur"
-
-    preprocessor = UniversalMineralPreprocessor(INPUT_FOLDER, OUTPUT_FOLDER)
-    preprocessor.process_folder(visualize_first=True)
 
     # ========================================
     # Option 2: Process all minerals in batch
@@ -485,15 +480,15 @@ class StatisticalMineralClassifier:
         if img is None:
             print(f"❌ Nie można otworzyć pliku: {image_path}")
             return None
-        
+
         # 1. Konwersja do HSV
         hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        
+
         # 2. Inteligentna maska (szukamy wszystkiego, co NIE jest białym tłem)
         # Zakładamy, że tło po Twoim preprocessingu ma jasność > 240
-        mask = gray < 240 
-        
+        mask = gray < 240
+
         # Sprawdzenie: czy maska coś znalazła?
         if np.sum(mask) == 0:
             # Jeśli maska jest pusta, weź środek obrazu (bezpiecznik)
@@ -502,14 +497,14 @@ class StatisticalMineralClassifier:
             print(f"⚠️ Uwaga: Maska dla {Path(image_path).name} była pusta. Używam środka obrazu.")
 
         mask = mask.astype(np.uint8)
-        
+
         # 3. Ekstrakcja cech
         # Średni kolor wewnątrz maski
         mean_hsv = cv2.mean(hsv, mask=mask)[:3]
-        
+
         # Tekstura - odchylenie standardowe jasności pikseli obiektu
         roughness = np.std(gray[mask > 0])
-        
+
         # 4. NOWOŚĆ: Proporcje kształtu (Współczynnik wydłużenia)
         contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         aspect_ratio = 1.0
@@ -517,7 +512,7 @@ class StatisticalMineralClassifier:
             cnt = max(contours, key=cv2.contourArea)
             x, y, w, h = cv2.boundingRect(cnt)
             aspect_ratio = float(w) / h # np. 1.0 to kwadrat, 0.5 to pionowy słupek
-        
+
         # Zwracamy wektor: [Hue, Saturation, Value, Roughness, AspectRatio]
         return np.array([mean_hsv[0], mean_hsv[1], mean_hsv[2], roughness, aspect_ratio])
 
@@ -531,7 +526,7 @@ class StatisticalMineralClassifier:
                     sig = self.get_image_signature(img_p)
                     if sig is not None:
                         signatures.append(sig)
-                
+
                 if signatures:
                     # Średnia ze wszystkich zdjęć danego minerału tworzy PROFIL
                     self.profiles[folder.name] = np.mean(signatures, axis=0)
@@ -548,88 +543,58 @@ class StatisticalMineralClassifier:
         for name, profile_sig in self.profiles.items():
             # Odległość euklidesowa (im mniejsza, tym bardziej podobne obiekty)
             distance = np.linalg.norm(target_sig - profile_sig)
-            
+
             if distance < min_distance:
                 min_distance = distance
                 best_match = name
-        
+
         return best_match
 
 # =============================================================================
-# USAGE EXAMPLES
-# =============================================================================
 
 if __name__ == "__main__":
-    # ========================================
-    # Option 1: Process a single mineral
-    # ========================================
-    print("\n=== Option 1: Single Mineral ===")
+    # 1. KONFIGURACJA ŚCIEŻEK
+    # Tutaj podaj ścieżkę do zdjęcia, które chcesz zidentyfikować:
+    SCIEZKA_DO_TESTU = Path("images/to_identify/2.jpeg")
 
-    INPUT_FOLDER = "images/minerals_raw/sulfur"
-    OUTPUT_FOLDER = "images/minerals_processed/sulfur"
-
-    preprocessor = UniversalMineralPreprocessor(INPUT_FOLDER, OUTPUT_FOLDER)
-    preprocessor.process_folder(visualize_first=True)
-
-    # ========================================
-    # Option 2: Process all minerals in batch
-    # ========================================
-    # print("\n=== Option 2: All Minerals ===")
-    #
-    # # List of minerals to process
-    # MINERALS = ['sulfur', 'obsidian', 'quartz', 'amethyst', 'pyrite']
-    #
-    # # Base paths
-    # BASE_INPUT = "images/minerals_raw/sulfur"  # Used as base path
-    # BASE_OUTPUT = "images/minerals_processed/sulfur"
-    #
-    # preprocessor = UniversalMineralPreprocessor(BASE_INPUT, BASE_OUTPUT)
-    # preprocessor.process_all_minerals(MINERALS, visualize_first=True)
-    
-if __name__ == "__main__":
-    # 1. Definicja ścieżek bazowych
-    BASE_RAW = Path("images/minerals_raw")
+    # Folder, w którym masz już przygotowane wzorce (do nauczenia klasyfikatora)
     BASE_PROCESSED = Path("images/minerals_processed")
+    # Folder tymczasowy na wynik analizy
+    TEMP_OUTPUT = Path("temp_analysis")
+    TEMP_OUTPUT.mkdir(exist_ok=True)
 
-    # 2. Inicjalizacja
-    main_prep = UniversalMineralPreprocessor(BASE_RAW, BASE_PROCESSED)
-    
-    # Pobieramy listę podfolderów
-    mineraly = [d.name for d in BASE_RAW.iterdir() if d.is_dir()]
-    
-    # --- TA LINIA MA BYĆ ZAKOMENTOWANA ---
-    main_prep.process_all_minerals(mineraly, visualize_first=False)
-    # -------------------------------------
-    
-    # 3. Klasyfikacja (Zaczyna od tego miejsca)
+    # 2. INICJALIZACJA
+    # Inicjujemy preprocesor (podajemy foldery, choć dla jednego pliku są drugorzędne)
+    preprocessor = UniversalMineralPreprocessor(SCIEZKA_DO_TESTU.parent, TEMP_OUTPUT)
+
+    # Inicjujemy i trenujemy klasyfikator na podstawie istniejącej bazy danych
+    print("--- Faza 1: Przygotowanie wzorców ---")
     classifier = StatisticalMineralClassifier()
-    classifier.train(BASE_PROCESSED)  # Trenuje na obrazach, które JUŻ są w folderze processed
+    classifier.train(BASE_PROCESSED)
 
-    #--- 4. TESTOWANIE I WYŚWIETLENIE WYNIKÓW ---
-    print(f"\n{'='*40}")
-    print("RAPORT ROZPOZNAWANIA (TYLKO KLASYFIKACJA):")
-    print(f"{'='*40}")
+    # 3. ANALIZA JEDNEGO ZADANEGO MINERAŁU
+    print(f"\n--- Faza 2: Analiza pliku: {SCIEZKA_DO_TESTU.name} ---")
 
-    # Przechodzimy przez wszystkie przetworzone foldery, żeby sprawdzić skuteczność
-    for folder_mineralu in BASE_PROCESSED.iterdir():
-        if folder_mineralu.is_dir():
-            pliki = list(folder_mineralu.glob("*_processed.png"))
-            if pliki:
-                poprawne = 0
-                for plik in pliki:
-                    wynik = classifier.predict(plik)
-                    if wynik.lower() == folder_mineralu.name.lower():
-                        poprawne += 1
-                
-                skutecznosc = (poprawne / len(pliki)) * 100
-                print(f"Minerał: {folder_mineralu.name:15} | Skuteczność: {skutecznosc:3.0f}% ({poprawne}/{len(pliki)})")
+    if not SCIEZKA_DO_TESTU.exists():
+        print(f"❌ Błąd: Plik {SCIEZKA_DO_TESTU} nie istnieje!")
+    else:
+        try:
+            # KROK A: Preprocessing (Denoise -> Contrast -> Segment -> Normalize)
+            # visualize=True pokaże Ci okno z etapami przetwarzania tego konkretnego kamienia
+            processed_img, mask, _ = preprocessor.process_single_image(SCIEZKA_DO_TESTU, visualize=True)
 
-    # --- 5. TEST POJEDYNCZEGO NOWEGO PLIKU (Opcjonalnie) ---
-    NOWY_PLIK = Path("obsidian_test.jpg")
-    if NOWY_PLIK.exists():
-        img_test, _, _ = main_prep.process_single_image(NOWY_PLIK)
-        if img_test is not None:
-            cv2.imwrite("obs_processed.png", img_test)
-            final_pred = classifier.predict("obs_processed.png")
-            print(f"\n>>> TEST PLIKU {NOWY_PLIK.name}: Rozpoznano jako {final_pred.upper()}")    
-       
+            # KROK B: Zapisanie tymczasowe, aby klasyfikator mógł odczytać cechy
+            temp_file_path = TEMP_OUTPUT / "current_analysis_processed.png"
+            cv2.imwrite(str(temp_file_path), processed_img)
+
+            # KROK C: Identyfikacja
+            wynik = classifier.predict(temp_file_path)
+
+            # 4. WYŚWIETLENIE WYNIKU
+            print(f"\n" + "=" * 40)
+            print(f" IDENTYFIKACJA ZAKOŃCZONA ")
+            print(f" Wynik: {wynik.upper()}")
+            print("=" * 40)
+
+        except Exception as e:
+            print(f"❌ Wystąpił błąd podczas analizy: {e}")
