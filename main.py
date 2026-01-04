@@ -425,16 +425,15 @@ class UniversalMineralPreprocessor:
             minerals_list: List of mineral folder names (e.g., ['sulfur', 'obsidian', 'quartz'])
             visualize_first: If True, displays visualization for the first image of each mineral
         """
-        base_input = self.input_dir.parent
-        base_output = self.output_dir.parent
+
 
         print(f"\n{'#' * 70}")
         print(f"  BATCH PREPROCESSING - ALL MINERALS")
         print(f"{'#' * 70}\n")
 
         for mineral in minerals_list:
-            input_path = base_input / mineral
-            output_path = base_output / mineral
+            input_path = self.input_dir / mineral
+            output_path = self.output_dir / mineral
 
             if not input_path.exists():
                 print(f"⚠️  Skipped {mineral} - directory does not exist")
@@ -475,3 +474,162 @@ if __name__ == "__main__":
     #
     # preprocessor = UniversalMineralPreprocessor(BASE_INPUT, BASE_OUTPUT)
     # preprocessor.process_all_minerals(MINERALS, visualize_first=True)
+class StatisticalMineralClassifier:
+    def __init__(self):
+        # Słownik przechowujący wzorce dla każdego minerału
+        self.profiles = {}
+
+    def get_image_signature(self, image_path):
+        """Tworzy unikalny podpis cyfrowy z lepszą obsługą błędów"""
+        img = cv2.imread(str(image_path))
+        if img is None:
+            print(f"❌ Nie można otworzyć pliku: {image_path}")
+            return None
+        
+        # 1. Konwersja do HSV
+        hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        
+        # 2. Inteligentna maska (szukamy wszystkiego, co NIE jest białym tłem)
+        # Zakładamy, że tło po Twoim preprocessingu ma jasność > 240
+        mask = gray < 240 
+        
+        # Sprawdzenie: czy maska coś znalazła?
+        if np.sum(mask) == 0:
+            # Jeśli maska jest pusta, weź środek obrazu (bezpiecznik)
+            h, w = gray.shape
+            mask[h//4:3*h//4, w//4:3*w//4] = 1
+            print(f"⚠️ Uwaga: Maska dla {Path(image_path).name} była pusta. Używam środka obrazu.")
+
+        mask = mask.astype(np.uint8)
+        
+        # 3. Ekstrakcja cech
+        # Średni kolor wewnątrz maski
+        mean_hsv = cv2.mean(hsv, mask=mask)[:3]
+        
+        # Tekstura - odchylenie standardowe jasności pikseli obiektu
+        roughness = np.std(gray[mask > 0])
+        
+        # 4. NOWOŚĆ: Proporcje kształtu (Współczynnik wydłużenia)
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        aspect_ratio = 1.0
+        if contours:
+            cnt = max(contours, key=cv2.contourArea)
+            x, y, w, h = cv2.boundingRect(cnt)
+            aspect_ratio = float(w) / h # np. 1.0 to kwadrat, 0.5 to pionowy słupek
+        
+        # Zwracamy wektor: [Hue, Saturation, Value, Roughness, AspectRatio]
+        return np.array([mean_hsv[0], mean_hsv[1], mean_hsv[2], roughness, aspect_ratio])
+
+    def train(self, processed_dir):
+        """Buduje profile wzorcowe dla każdej podfolderu"""
+        base_path = Path(processed_dir)
+        for folder in base_path.iterdir():
+            if folder.is_dir():
+                signatures = []
+                for img_p in folder.glob("*_processed.png"):
+                    sig = self.get_image_signature(img_p)
+                    if sig is not None:
+                        signatures.append(sig)
+                
+                if signatures:
+                    # Średnia ze wszystkich zdjęć danego minerału tworzy PROFIL
+                    self.profiles[folder.name] = np.mean(signatures, axis=0)
+                    print(f"Utworzono profil dla: {folder.name}")
+
+    def predict(self, image_path):
+        """Rozpoznaje minerał szukając najmniejszej odległości matematycznej"""
+        target_sig = self.get_image_signature(image_path)
+        if target_sig is None: return "Błąd odczytu"
+
+        best_match = None
+        min_distance = float('inf')
+
+        for name, profile_sig in self.profiles.items():
+            # Odległość euklidesowa (im mniejsza, tym bardziej podobne obiekty)
+            distance = np.linalg.norm(target_sig - profile_sig)
+            
+            if distance < min_distance:
+                min_distance = distance
+                best_match = name
+        
+        return best_match
+
+# =============================================================================
+# USAGE EXAMPLES
+# =============================================================================
+
+if __name__ == "__main__":
+    # ========================================
+    # Option 1: Process a single mineral
+    # ========================================
+    print("\n=== Option 1: Single Mineral ===")
+
+    INPUT_FOLDER = "images/minerals_raw/sulfur"
+    OUTPUT_FOLDER = "images/minerals_processed/sulfur"
+
+    preprocessor = UniversalMineralPreprocessor(INPUT_FOLDER, OUTPUT_FOLDER)
+    preprocessor.process_folder(visualize_first=True)
+
+    # ========================================
+    # Option 2: Process all minerals in batch
+    # ========================================
+    # print("\n=== Option 2: All Minerals ===")
+    #
+    # # List of minerals to process
+    # MINERALS = ['sulfur', 'obsidian', 'quartz', 'amethyst', 'pyrite']
+    #
+    # # Base paths
+    # BASE_INPUT = "images/minerals_raw/sulfur"  # Used as base path
+    # BASE_OUTPUT = "images/minerals_processed/sulfur"
+    #
+    # preprocessor = UniversalMineralPreprocessor(BASE_INPUT, BASE_OUTPUT)
+    # preprocessor.process_all_minerals(MINERALS, visualize_first=True)
+    
+if __name__ == "__main__":
+    # 1. Definicja ścieżek bazowych
+    BASE_RAW = Path("images/minerals_raw")
+    BASE_PROCESSED = Path("images/minerals_processed")
+
+    # 2. Inicjalizacja
+    main_prep = UniversalMineralPreprocessor(BASE_RAW, BASE_PROCESSED)
+    
+    # Pobieramy listę podfolderów
+    mineraly = [d.name for d in BASE_RAW.iterdir() if d.is_dir()]
+    
+    # --- TA LINIA MA BYĆ ZAKOMENTOWANA ---
+    main_prep.process_all_minerals(mineraly, visualize_first=False)
+    # -------------------------------------
+    
+    # 3. Klasyfikacja (Zaczyna od tego miejsca)
+    classifier = StatisticalMineralClassifier()
+    classifier.train(BASE_PROCESSED)  # Trenuje na obrazach, które JUŻ są w folderze processed
+
+    #--- 4. TESTOWANIE I WYŚWIETLENIE WYNIKÓW ---
+    print(f"\n{'='*40}")
+    print("RAPORT ROZPOZNAWANIA (TYLKO KLASYFIKACJA):")
+    print(f"{'='*40}")
+
+    # Przechodzimy przez wszystkie przetworzone foldery, żeby sprawdzić skuteczność
+    for folder_mineralu in BASE_PROCESSED.iterdir():
+        if folder_mineralu.is_dir():
+            pliki = list(folder_mineralu.glob("*_processed.png"))
+            if pliki:
+                poprawne = 0
+                for plik in pliki:
+                    wynik = classifier.predict(plik)
+                    if wynik.lower() == folder_mineralu.name.lower():
+                        poprawne += 1
+                
+                skutecznosc = (poprawne / len(pliki)) * 100
+                print(f"Minerał: {folder_mineralu.name:15} | Skuteczność: {skutecznosc:3.0f}% ({poprawne}/{len(pliki)})")
+
+    # --- 5. TEST POJEDYNCZEGO NOWEGO PLIKU (Opcjonalnie) ---
+    NOWY_PLIK = Path("obsidian_test.jpg")
+    if NOWY_PLIK.exists():
+        img_test, _, _ = main_prep.process_single_image(NOWY_PLIK)
+        if img_test is not None:
+            cv2.imwrite("obs_processed.png", img_test)
+            final_pred = classifier.predict("obs_processed.png")
+            print(f"\n>>> TEST PLIKU {NOWY_PLIK.name}: Rozpoznano jako {final_pred.upper()}")    
+       
