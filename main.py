@@ -3,8 +3,7 @@ import numpy as np
 import os
 from pathlib import Path
 import matplotlib.pyplot as plt
-import matplotlib
-matplotlib.use("Qt5Agg")
+
 
 class UniversalMineralPreprocessor:
     """
